@@ -1,36 +1,35 @@
 #!/usr/bin/env bash
 
-# Script to download files
+# Script to download EDLists.org data files
+# EDLists.org: EU Endocrine Disruptor Lists
+# Source: https://edlists.org/
 
-# Get local path
+set -e
+
 localpath=$(pwd)
 echo "Local path: $localpath"
 
-# Create the list directory to save list of remote files and directories
+# Create directories
 listpath="$localpath/list"
+mkdir -p "$listpath"
 echo "List path: $listpath"
-mkdir -p $listpath
-cd $listpath;
 
-# Define the FTP base address
-export ftpbase=""
-
-# Retrieve the list of files to download from FTP base address
-wget --no-remove-listing $ftpbase
-cat index.html | grep -Po '(?<=href=")[^"]*' | sort | cut -d "/" -f 10 > files.txt
-rm .listing
-rm index.html
-
-# Create the download directory
-export downloadpath="$localpath/download"
-echo "Download path: $downloadpath"
+downloadpath="$localpath/download"
 mkdir -p "$downloadpath"
-cd $downloadpath;
+echo "Download path: $downloadpath"
 
-# Download files in parallel
-cat $listpath/files.txt | xargs -P14 -n1 bash -c '
-  echo $0
-  wget -nH -q -nc -P $downloadpath $ftpbase$0
-'
+# EDLists.org URLs for the three lists
+# Note: These pages have "Download XLSX" buttons that generate Excel files
 
-echo "Download done."
+# Create list of source pages
+cat > "$listpath/files.txt" << 'EOF'
+list_i_eu_identified.xlsx
+list_ii_under_evaluation.xlsx
+list_iii_national_authority.xlsx
+EOF
+
+# Download using Python script (handles JavaScript-rendered content)
+python3 stages/download_edlists.py "$downloadpath"
+
+echo "Download complete."
+ls -la "$downloadpath"
