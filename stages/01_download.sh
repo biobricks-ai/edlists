@@ -21,15 +21,18 @@ echo "Download path: $downloadpath"
 # EDLists.org URLs for the three lists
 # Note: These pages have "Download XLSX" buttons that generate Excel files
 
-# Create list of source pages
+# Create list of expected output files (CSVs from Wayback Machine HTML parsing)
 cat > "$listpath/files.txt" << 'EOF'
-list_i_eu_identified.xlsx
-list_ii_under_evaluation.xlsx
-list_iii_national_authority.xlsx
+list_i_eu_identified.csv
+list_ii_under_evaluation.csv
+list_iii_national_authority.csv
 EOF
 
-# Download using Python script (handles JavaScript-rendered content)
+# Download using Python script (parses HTML tables from Wayback Machine)
+# Clever solution: Uses Internet Archive to bypass Cloudflare protection
 python3 stages/download_edlists.py "$downloadpath"
 
+echo ""
 echo "Download complete."
+echo "Note: Data sourced from Internet Archive (February 2024 snapshot)"
 ls -la "$downloadpath"

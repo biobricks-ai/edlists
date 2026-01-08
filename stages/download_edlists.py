@@ -1,160 +1,165 @@
 #!/usr/bin/env python3
 """
-Download EDLists.org Excel files.
+Download EDLists data from Internet Archive (Wayback Machine)
+Parses HTML tables from archived pages to extract ED substance lists.
 
-EDLists.org provides three lists of endocrine disruptors:
-- List I: Substances identified as EDs at EU level
-- List II: Substances under evaluation for ED properties
-- List III: Substances considered EDs by national authorities
-
-Each list page has a "Download XLSX" button.
+Clever solution: Uses Wayback Machine to bypass Cloudflare protection on edlists.org
 """
 
 import os
 import sys
-import time
+import re
 import requests
 from pathlib import Path
+from bs4 import BeautifulSoup
+import csv
 
-# EDLists.org list pages
+# Wayback Machine URLs (February 2024 archive)
 LISTS = {
     "list_i_eu_identified": {
-        "url": "https://edlists.org/the-ed-lists/list-i-substances-identified-as-endocrine-disruptors-by-the-eu",
+        "url": "https://web.archive.org/web/20240203050304/https://edlists.org/the-ed-lists/list-i-substances-identified-as-endocrine-disruptors-by-the-eu",
         "description": "Substances identified as endocrine disruptors at EU level",
     },
     "list_ii_under_evaluation": {
-        "url": "https://edlists.org/the-ed-lists/list-ii-substances-under-eu-investigation-endocrine-disruption",
-        "description": "Substances under evaluation for endocrine disruption under EU legislation",
+        "url": "https://web.archive.org/web/20240203050308/https://edlists.org/the-ed-lists/list-ii-substances-under-eu-investigation-endocrine-disruption",
+        "description": "Substances under EU investigation for endocrine disruption",
     },
     "list_iii_national_authority": {
-        "url": "https://edlists.org/the-ed-lists/list-iii-substances-identified-as-endocrine-disruptors-by-participating-national-authorities",
-        "description": "Substances considered to have ED properties by national authorities",
+        "url": "https://web.archive.org/web/20240203050312/https://edlists.org/the-ed-lists/list-iii-substances-identified-as-endocrine-disruptors-by-participating-national-authorities",
+        "description": "Substances identified by national authorities as having ED properties",
     },
 }
 
 
-def try_direct_download(download_path: Path) -> bool:
-    """
-    Try to download Excel files directly from EDLists.org.
+def clean_text(text):
+    """Clean whitespace and HTML artifacts from text"""
+    if text is None:
+        return ""
+    # Remove excess whitespace
+    text = re.sub(r'\s+', ' ', str(text).strip())
+    return text
 
-    The site may have direct download links or require JavaScript rendering.
-    """
+
+def parse_edlist_table(url, list_name):
+    """Parse HTML table from archived EDLists page"""
+    print(f"Fetching: {list_name}")
+    print(f"  URL: {url}")
+
     session = requests.Session()
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     })
 
-    success_count = 0
+    response = session.get(url, timeout=60)
+    response.raise_for_status()
 
-    for list_name, info in LISTS.items():
-        print(f"\nProcessing: {list_name}")
-        print(f"  URL: {info['url']}")
+    soup = BeautifulSoup(response.text, 'html.parser')
 
-        try:
-            # First, fetch the page to look for download links
-            response = session.get(info["url"], timeout=30)
-            response.raise_for_status()
+    # Find the main data table (EDLists uses cols-7 class)
+    table = soup.find('table', class_='cols-7')
+    if not table:
+        # Try other table patterns
+        table = soup.find('table')
 
-            # Look for Excel download link in the page
-            # Common patterns: .xlsx links, export endpoints
-            html = response.text
+    if not table:
+        print(f"  WARNING: No table found in {list_name}")
+        return [], []
 
-            # Try common Excel export patterns
-            export_urls = []
+    # Extract headers
+    headers = []
+    thead = table.find('thead')
+    if thead:
+        for th in thead.find_all('th'):
+            header_text = clean_text(th.get_text())
+            # Shorten headers
+            header_text = header_text.replace('Name and abbreviation', 'name')
+            header_text = header_text.replace('CAS no.', 'cas_number')
+            header_text = header_text.replace('EC / List no.', 'ec_list_number')
+            header_text = header_text.replace('Health Effects', 'health_effects')
+            header_text = header_text.replace('Environmental Effects', 'environmental_effects')
+            header_text = header_text.replace('Status', 'status')
+            header_text = header_text.replace('Regulatory Field', 'regulatory_field')
+            headers.append(header_text)
 
-            # Pattern 1: Direct .xlsx link
-            import re
-            xlsx_links = re.findall(r'href="([^"]*\.xlsx[^"]*)"', html, re.IGNORECASE)
-            export_urls.extend(xlsx_links)
+    # If no headers found in thead, use default
+    if not headers:
+        headers = ['name', 'cas_number', 'ec_list_number', 'health_effects',
+                   'environmental_effects', 'status', 'regulatory_field']
 
-            # Pattern 2: Export endpoint
-            export_links = re.findall(r'href="([^"]*export[^"]*)"', html, re.IGNORECASE)
-            export_urls.extend(export_links)
+    # Extract rows
+    rows = []
+    tbody = table.find('tbody') or table
+    for tr in tbody.find_all('tr'):
+        cells = tr.find_all('td')
+        if cells:
+            row = [clean_text(td.get_text()) for td in cells]
+            if any(row):  # Skip empty rows
+                # Pad row to match header length
+                while len(row) < len(headers):
+                    row.append('')
+                rows.append(row[:len(headers)])
 
-            # Pattern 3: Download button with data attribute
-            download_links = re.findall(r'data-href="([^"]*)"', html)
-            export_urls.extend(download_links)
-
-            if export_urls:
-                for url in export_urls:
-                    if not url.startswith("http"):
-                        url = f"https://edlists.org{url}" if url.startswith("/") else f"https://edlists.org/{url}"
-
-                    print(f"  Trying: {url}")
-                    try:
-                        dl_response = session.get(url, timeout=60)
-                        if dl_response.status_code == 200 and len(dl_response.content) > 1000:
-                            output_file = download_path / f"{list_name}.xlsx"
-                            with open(output_file, "wb") as f:
-                                f.write(dl_response.content)
-                            print(f"  Downloaded: {output_file}")
-                            success_count += 1
-                            break
-                    except Exception as e:
-                        print(f"  Failed: {e}")
-            else:
-                print("  No direct download links found")
-                print("  Manual download may be required from the website")
-
-        except Exception as e:
-            print(f"  Error: {e}")
-
-        time.sleep(1)  # Be nice to the server
-
-    return success_count > 0
+    print(f"  Found {len(rows)} substances")
+    return headers, rows
 
 
-def create_placeholder_instructions(download_path: Path):
-    """Create a README with manual download instructions."""
-    readme = download_path / "DOWNLOAD_INSTRUCTIONS.md"
-    readme.write_text("""# EDLists.org Manual Download Instructions
-
-The EDLists.org website uses JavaScript to generate Excel downloads.
-Please manually download the files from:
-
-## List I - EU Identified EDs
-URL: https://edlists.org/the-ed-lists/list-i-substances-identified-as-endocrine-disruptors-by-the-eu
-- Click "Download XLSX" button at bottom of table
-- Save as: list_i_eu_identified.xlsx
-
-## List II - Under EU Evaluation
-URL: https://edlists.org/the-ed-lists/list-ii-substances-under-eu-investigation-endocrine-disruption
-- Click "Download XLSX" button at bottom of table
-- Save as: list_ii_under_evaluation.xlsx
-
-## List III - National Authority Identified
-URL: https://edlists.org/the-ed-lists/list-iii-substances-identified-as-endocrine-disruptors-by-participating-national-authorities
-- Click "Download XLSX" button at bottom of table
-- Save as: list_iii_national_authority.xlsx
-
-Place all downloaded files in this download/ directory.
-""")
-    print(f"\nCreated: {readme}")
+def save_csv(headers, rows, output_file):
+    """Save data to CSV file"""
+    with open(output_file, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(headers)
+        writer.writerows(rows)
 
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: download_edlists.py <download_path>")
-        sys.exit(1)
+        download_path = Path("download")
+    else:
+        download_path = Path(sys.argv[1])
 
-    download_path = Path(sys.argv[1])
     download_path.mkdir(parents=True, exist_ok=True)
 
     print("=" * 60)
-    print("EDLists.org Data Download")
+    print("Downloading EDLists from Internet Archive (Wayback Machine)")
+    print("Source: edlists.org (February 2024 archive)")
+    print("=" * 60)
+    print()
+
+    success_count = 0
+
+    for list_name, info in LISTS.items():
+        try:
+            headers, rows = parse_edlist_table(info["url"], list_name)
+
+            if rows:
+                output_file = download_path / f"{list_name}.csv"
+                save_csv(headers, rows, output_file)
+                print(f"  Saved: {output_file}")
+                success_count += 1
+            else:
+                print(f"  SKIPPED: No data found for {list_name}")
+
+            print()
+
+        except Exception as e:
+            print(f"  ERROR processing {list_name}: {e}")
+            import traceback
+            traceback.print_exc()
+            print()
+
+    print("=" * 60)
+    if success_count > 0:
+        print(f"Download complete! {success_count} lists downloaded.")
+    else:
+        print("WARNING: No data downloaded. Check network connectivity.")
     print("=" * 60)
 
-    # Try automatic download
-    success = try_direct_download(download_path)
-
-    if not success:
-        print("\n" + "=" * 60)
-        print("Automatic download did not succeed.")
-        print("Creating manual download instructions...")
-        create_placeholder_instructions(download_path)
-
-    print("\nDownload stage complete.")
+    # List downloaded files
+    print("\nDownloaded files:")
+    for f in download_path.glob("*.csv"):
+        size = f.stat().st_size
+        print(f"  {f.name}: {size:,} bytes")
 
 
 if __name__ == "__main__":

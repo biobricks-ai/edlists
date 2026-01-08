@@ -1,2 +1,73 @@
 schema: '2.0'
-stages: {}
+stages:
+  download:
+    cmd: stages/01_download.sh
+    deps:
+    - path: stages/01_download.sh
+      hash: md5
+      md5: ede3f328c3ed8a51184ae5f21c972a04
+      size: 1043
+      isexec: true
+    outs:
+    - path: download
+      hash: md5
+      md5: 301fedd83c078c4e411b9002a3af47a4.dir
+      size: 21385
+      nfiles: 3
+    - path: list
+      hash: md5
+      md5: d7f99c98ec31098f3d9533d67a6d7f30.dir
+      size: 86
+      nfiles: 1
+  unzip:
+    cmd: stages/02_unzip.sh
+    deps:
+    - path: download
+      hash: md5
+      md5: 301fedd83c078c4e411b9002a3af47a4.dir
+      size: 21385
+      nfiles: 3
+    - path: list
+      hash: md5
+      md5: d7f99c98ec31098f3d9533d67a6d7f30.dir
+      size: 86
+      nfiles: 1
+    - path: stages/02_unzip.sh
+      hash: md5
+      md5: d09f6532725b15cf67dd088522c2e2b8
+      size: 814
+      isexec: true
+    outs:
+    - path: raw
+      hash: md5
+      md5: 301fedd83c078c4e411b9002a3af47a4.dir
+      size: 21385
+      nfiles: 3
+  build:
+    cmd: stages/03_build.sh
+    deps:
+    - path: list
+      hash: md5
+      md5: d7f99c98ec31098f3d9533d67a6d7f30.dir
+      size: 86
+      nfiles: 1
+    - path: raw
+      hash: md5
+      md5: 301fedd83c078c4e411b9002a3af47a4.dir
+      size: 21385
+      nfiles: 3
+    - path: stages/03_build.sh
+      hash: md5
+      md5: 17cee074259eaaa89afa5ce6327c05ac
+      size: 672
+      isexec: true
+    - path: stages/csv2parquet.py
+      hash: md5
+      md5: 1bc941a5c58b46e8997e7ad0b8d7a861
+      size: 261
+    outs:
+    - path: brick
+      hash: md5
+      md5: bc28f2e8c2c88933d3c73828ad474af0.dir
+      size: 24099
+      nfiles: 3
