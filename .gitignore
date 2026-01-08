@@ -3,3 +3,6 @@ logs
 /list
 /brick
 /raw
+__pycache__
+*.pyc
+.venv
